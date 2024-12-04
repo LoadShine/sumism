@@ -1,7 +1,7 @@
 chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
         id: "summarizeContent",
-        title: "使用AI总结内容",
+        title: "页面总结",
         contexts: ["page"]
     });
 });
@@ -25,7 +25,7 @@ async function updateMenuState(url) {
     const showing = result[key] || false;
 
     chrome.contextMenus.update("summarizeContent", {
-        title: showing ? "隐藏总结" : "使用AI总结内容"
+        title: showing ? "隐藏总结" : "页面总结"
     });
 }
 
@@ -36,7 +36,7 @@ chrome.runtime.onMessage.addListener(async (request, sender) => {
         await chrome.storage.local.set({[key]: request.hasSummaries});
 
         chrome.contextMenus.update("summarizeContent", {
-            title: request.hasSummaries ? "隐藏总结" : "使用AI总结内容"
+            title: request.hasSummaries ? "隐藏总结" : "页面总结"
         });
     }
 });
