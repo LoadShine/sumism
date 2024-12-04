@@ -283,6 +283,8 @@ ${paragraph}
         const finalSystemPrompt = systemPrompt + '\n' + languageInstruction;
 
         switch (settings.provider) {
+            case 'ai302':
+                return this.call302AIAPI(settings, finalSystemPrompt, userPrompt);
             case 'openai':
                 return this.callOpenAIAPI(settings, finalSystemPrompt, userPrompt);
             case 'claude':
@@ -292,8 +294,32 @@ ${paragraph}
             case 'custom':
                 return this.callCustomAPI(settings, finalSystemPrompt, userPrompt);
             default:
-                throw new Error('未知的AI提供商');
+                return this.callOpenAIAPI(settings, finalSystemPrompt, userPrompt);
         }
+    }
+
+    async call302AIAPI(settings, systemPrompt, userPrompt) {
+        const response = await fetch('https://api.302.ai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${settings.apiKey}`
+            },
+            body: JSON.stringify({
+                model: settings.model || "gpt-3.5-turbo",
+                messages: [
+                    {
+                        role: "system",
+                        content: systemPrompt
+                    }, {
+                        role: "user",
+                        content: userPrompt
+                    }
+                ]
+            })
+        });
+        const data = await response.json();
+        return data.choices[0].message.content;
     }
 
     async callOpenAIAPI(settings, systemPrompt, userPrompt) {
