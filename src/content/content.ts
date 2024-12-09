@@ -43,7 +43,7 @@ class ContentSummarizer {
     private maxConcurrentRequests: number = 10;
 
     async initialize() {
-        // 1. 标识所有段落
+        // 标识所有段落
         const paragraphs = document.querySelectorAll('p');
         paragraphs.forEach((p, index) => {
             if (!p.id) {
@@ -52,13 +52,35 @@ class ContentSummarizer {
             this.wrapParagraph(p);
         });
 
-        // 2. 设置Intersection Observer
-        this.setupIntersectionObserver();
+        // 检查总结状态并更新菜单
+        await this.checkSummaryStatus();
 
+        // 设置Intersection Observer
+        this.setupIntersectionObserver();
+    }
+
+    async checkSummaryStatus() {
+        // 检查是否有缓存的总结
+        const paragraphs = document.querySelectorAll('p');
+        const hasCachedSummaries = await this.checkCachedSummaries(paragraphs);
+
+        // 更新菜单状态
         chrome.runtime.sendMessage({
             action: 'updateContextMenu',
-            hasSummaries: true,
+            hasSummaries: hasCachedSummaries
         });
+    }
+
+    async checkCachedSummaries(paragraphs: NodeListOf<HTMLParagraphElement>): Promise<boolean> {
+        const paragraphsArray = Array.from(paragraphs);
+
+        for (const paragraph of paragraphsArray) {
+            const cachedSummary = await this.getFromCache(paragraph.id);
+            if (cachedSummary) {
+                return true;
+            }
+        }
+        return false;
     }
 
     getDefaultSystemPrompt(): string {
