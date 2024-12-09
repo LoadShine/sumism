@@ -322,27 +322,6 @@ ${paragraph}
         return requestPromise;
     }
 
-    // async summarizeParagraph(paragraph: HTMLParagraphElement) {
-    //     // 如果已经在队列中,不要重复添加
-    //     if (this.requestQueue.some((req) => req.paragraph.id === paragraph.id)) {
-    //         return;
-    //     }
-    //
-    //     // 创建一个Promise来处理请求
-    //     const requestPromise = new Promise<void>((resolve, reject) => {
-    //         this.requestQueue.push({
-    //             paragraph,
-    //             resolve,
-    //             reject,
-    //         });
-    //     });
-    //
-    //     // 尝试处理队列
-    //     this.processQueue();
-    //
-    //     return requestPromise;
-    // }
-
     async processQueue() {
         // 如果已经达到并发限制或队列为空,则返回
         if (
@@ -636,9 +615,6 @@ ${paragraph}
     async hideSummaries() {
         document.querySelectorAll('.summary-content').forEach((summary) => {
             (summary as HTMLElement).style.display = 'none';
-        });
-        document.querySelectorAll('.paragraph-wrapper p').forEach((p) => {
-            (p as HTMLElement).style.opacity = '1';
         });
 
         // 清除当前页面的菜单状态
