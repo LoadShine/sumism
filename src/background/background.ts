@@ -1,4 +1,3 @@
-// src/background/background.ts
 chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
         id: 'summarizeContent',

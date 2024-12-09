@@ -1,4 +1,3 @@
-// src/content/content.ts
 class SummaryLengthCalculator {
     static calculateOverallSummaryLength(fullText: string): number {
         const wordCount = this.getWordCount(fullText);
