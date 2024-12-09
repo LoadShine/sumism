@@ -5,10 +5,6 @@
                        v-model:customModelName="settings.customModelName" />
     <ModelSelector v-if="settings.provider !== 'custom'" v-model:model="settings.model"
                    :provider="settings.provider" />
-    <CustomPromptToggle v-model:useCustomPrompt="settings.useCustomPrompt" />
-    <CustomPromptSettings v-if="settings.useCustomPrompt" v-model:systemPrompt="settings.systemPrompt"
-                          v-model:userPrompt="settings.userPrompt" />
-    <SummaryLanguageSelector v-model:summaryLanguage="settings.summaryLanguage" />
     <button @click="saveSettings">保存设置</button>
     <div id="notification" ref="notificationRef"></div>
   </div>
@@ -19,9 +15,6 @@ import {reactive, ref, onMounted} from 'vue';
 import ProviderSelector from './components/ProviderSelector.vue';
 import CustomApiSettings from './components/CustomApiSettings.vue';
 import ModelSelector from './components/ModelSelector.vue';
-import CustomPromptToggle from './components/CustomPromptToggle.vue';
-import CustomPromptSettings from './components/CustomPromptSettings.vue';
-import SummaryLanguageSelector from './components/SummaryLanguageSelector.vue';
 import type {AISettings} from '@/types';
 
 const settings = reactive<AISettings>({
