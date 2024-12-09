@@ -33,9 +33,9 @@ class SummaryLengthCalculator {
 
 class ContentSummarizer {
     private observer: IntersectionObserver | null = null;
-    private summarizedParagraphs: Set<string> = new Set();
+    private summarizedElements: Set<string> = new Set();
     private requestQueue: {
-        paragraph: HTMLParagraphElement;
+        element: HTMLElement;
         resolve: (value: void | PromiseLike<void>) => void;
         reject: (reason?: any) => void;
     }[] = [];
@@ -43,13 +43,15 @@ class ContentSummarizer {
     private maxConcurrentRequests: number = 10;
 
     async initialize() {
-        // 标识所有段落
-        const paragraphs = document.querySelectorAll('p');
-        paragraphs.forEach((p, index) => {
-            if (!p.id) {
-                p.id = `paragraph-${index}`;
+        // 获取所有需要总结的内容元素
+        const contentElements = this.getContentElements();
+
+        // 为每个元素添加唯一ID和包装器
+        contentElements.forEach((element, index) => {
+            if (!element.id) {
+                element.id = `content-${index}`;
             }
-            this.wrapParagraph(p);
+            this.wrapElement(element);
         });
 
         // 检查总结状态并更新菜单
@@ -57,6 +59,120 @@ class ContentSummarizer {
 
         // 设置Intersection Observer
         this.setupIntersectionObserver();
+    }
+
+    private getMainContent(): Element[] {
+        // 尝试多种选择器来定位主要内容区域
+        const selectors = [
+            'main',
+            'article',
+            '[role="main"]',
+            '.main-content',
+            '.content',
+            '.article',
+            '#content',
+            '#main'
+        ];
+
+        for (const selector of selectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+                return [element];
+            }
+        }
+
+        // 如果没有找到明确的主内容区域，返回body
+        return [document.body];
+    }
+
+    private getContentElements(): Element[] {
+        const mainContent = this.getMainContent();
+        const contentElements: Element[] = [];
+
+        mainContent.forEach(container => {
+            // 标题
+            const titleSelectors = 'h1, h2, h3, header';
+            const titles = container.querySelectorAll(titleSelectors);
+            contentElements.push(...Array.from(titles));
+
+            // 正文内容
+            const contentSelectors = `
+                p,
+                ul, ol,
+                table,
+                blockquote,
+                pre,
+                .content-block,
+                article,
+                section
+            `;
+            const contents = container.querySelectorAll(contentSelectors);
+            contentElements.push(...Array.from(contents));
+        });
+
+        return contentElements;
+    }
+
+    wrapElement(element: Element) {
+        // 创建包装器
+        const wrapper = document.createElement('div');
+        wrapper.className = 'paragraph-wrapper';
+        element.parentNode?.insertBefore(wrapper, element);
+        wrapper.appendChild(element);
+
+        // 创建总结显示区域
+        const summaryDiv = document.createElement('div');
+        summaryDiv.className = 'summary-content';
+        summaryDiv.style.display = 'none';
+        wrapper.insertBefore(summaryDiv, element);
+    }
+
+    getElementContent(element: Element): string {
+        // 根据元素类型提取内容
+        switch(element.tagName.toLowerCase()) {
+            case 'table':
+                return this.extractTableContent(element as HTMLTableElement);
+            case 'ul':
+            case 'ol':
+                return this.extractListContent(element);
+            case 'pre':
+                return '代码块：' + element.textContent?.trim() || '';
+            default:
+                return element.textContent?.trim() || '';
+        }
+    }
+
+    private extractTableContent(table: HTMLTableElement): string {
+        let content = '';
+
+        // 提取表头
+        const headers = Array.from(table.querySelectorAll('th'))
+            .map(th => th.textContent?.trim())
+            .filter(Boolean);
+        if (headers.length) {
+            content += '表头：' + headers.join(' | ') + '\n';
+        }
+
+        // 提取行数据
+        const rows = Array.from(table.querySelectorAll('tr'))
+            .map(tr =>
+                Array.from(tr.querySelectorAll('td'))
+                    .map(td => td.textContent?.trim())
+                    .filter(Boolean)
+                    .join(' | ')
+            )
+            .filter(Boolean);
+
+        content += '表格内容：\n' + rows.join('\n');
+        return content;
+    }
+
+    private extractListContent(list: Element): string {
+        const items = Array.from(list.querySelectorAll('li'))
+            .map(li => li.textContent?.trim())
+            .filter(Boolean);
+
+        return `${list.tagName === 'UL' ? '无序列表' : '有序列表'}：\n${items.join('\n')}`;
     }
 
     async checkSummaryStatus() {
@@ -170,9 +286,9 @@ ${paragraph}
             (entries) => {
                 entries.forEach((entry) => {
                     if (entry.isIntersecting) {
-                        const paragraph = entry.target.querySelector('p');
-                        if (paragraph && !this.summarizedParagraphs.has(paragraph.id)) {
-                            this.summarizeParagraph(paragraph);
+                        const contentElement = entry.target.querySelector('[id^="content-"]');
+                        if (contentElement && !this.summarizedElements.has(contentElement.id)) {
+                            this.summarizeElement(contentElement as HTMLElement);
                         }
                     }
                 });
@@ -185,16 +301,16 @@ ${paragraph}
         });
     }
 
-    async summarizeParagraph(paragraph: HTMLParagraphElement) {
+    async summarizeElement(element: HTMLElement) {
         // 如果已经在队列中,不要重复添加
-        if (this.requestQueue.some((req) => req.paragraph.id === paragraph.id)) {
+        if (this.requestQueue.some((req) => req.element.id === element.id)) {
             return;
         }
 
         // 创建一个Promise来处理请求
         const requestPromise = new Promise<void>((resolve, reject) => {
             this.requestQueue.push({
-                paragraph,
+                element,
                 resolve,
                 reject,
             });
@@ -206,8 +322,29 @@ ${paragraph}
         return requestPromise;
     }
 
+    // async summarizeParagraph(paragraph: HTMLParagraphElement) {
+    //     // 如果已经在队列中,不要重复添加
+    //     if (this.requestQueue.some((req) => req.paragraph.id === paragraph.id)) {
+    //         return;
+    //     }
+    //
+    //     // 创建一个Promise来处理请求
+    //     const requestPromise = new Promise<void>((resolve, reject) => {
+    //         this.requestQueue.push({
+    //             paragraph,
+    //             resolve,
+    //             reject,
+    //         });
+    //     });
+    //
+    //     // 尝试处理队列
+    //     this.processQueue();
+    //
+    //     return requestPromise;
+    // }
+
     async processQueue() {
-        // 如果已经达到并发限制或队列为空，则返回
+        // 如果已经达到并发限制或队列为空,则返回
         if (
             this.activeRequests >= this.maxConcurrentRequests ||
             this.requestQueue.length === 0
@@ -230,16 +367,16 @@ ${paragraph}
 
             // 检查缓存
             const cachedSummary = await this.getFromCache(
-                settingHashString + '_' + request.paragraph.id,
+                settingHashString + '_' + request.element.id,
             );
             if (cachedSummary) {
-                this.displaySummary(request.paragraph, cachedSummary);
+                this.displaySummary(request.element, cachedSummary);
                 request.resolve();
                 return;
             }
 
             // 添加加载动画
-            const wrapper = request.paragraph.closest('.paragraph-wrapper');
+            const wrapper = request.element.closest('.paragraph-wrapper');
             if (!wrapper) return;
             const summaryDiv = wrapper.querySelector('.summary-content');
             if (!summaryDiv) return;
@@ -250,21 +387,19 @@ ${paragraph}
             const maxRetries = 3;
             for (let attempt = 1; attempt <= maxRetries; attempt++) {
                 try {
-                    const summary = await this.callAIAPI(
-                        request.paragraph.textContent || '',
-                        aiSettings,
-                    );
+                    const content = this.getElementContent(request.element);
+                    const summary = await this.callAIAPI(content, aiSettings);
                     await this.saveToCache(
-                        settingHashString + '_' + request.paragraph.id,
+                        settingHashString + '_' + request.element.id,
                         summary,
                     );
-                    this.displaySummary(request.paragraph, summary);
+                    this.displaySummary(request.element, summary);
                     request.resolve();
                     break;
                 } catch (error) {
-                    console.error(`总结失败，重试 ${attempt}:`, error);
+                    console.error(`总结失败,重试 ${attempt}:`, error);
                     if (attempt === maxRetries) {
-                        this.displayError(request.paragraph);
+                        this.displayError(request.element);
                         request.reject(error);
                     }
                 }
@@ -277,11 +412,13 @@ ${paragraph}
     }
 
     async callAIAPI(text: string, settings: any) {
-        // 获取所有段落内容
-        const paragraphs = Array.from(document.querySelectorAll('p'));
-        const fullText = paragraphs.map((p) => p.textContent).join('\n');
+        // 获取所有内容元素的内容
+        const contentElements = this.getContentElements();
+        const fullText = contentElements
+            .map(element => this.getElementContent(element))
+            .join('\n');
 
-        // 第一步：获取整体总结
+        // 第一步:获取整体总结
         const systemPrompt = settings.useCustomPrompt
             ? settings.systemPrompt
             : this.getDefaultSystemPrompt();
@@ -296,12 +433,12 @@ ${paragraph}
             overallSummaryPrompt,
         );
 
-        // 第二步：获取段落总结
-        const paragraphPrompt = settings.useCustomPrompt
+        // 第二步:获取当前元素的总结
+        const elementPrompt = settings.useCustomPrompt
             ? settings.userPrompt.replace('{paragraph}', text)
             : this.getParagraphSummaryPrompt(overallSummary, text);
 
-        return this.callProviderAPI(settings, systemPrompt, paragraphPrompt);
+        return this.callProviderAPI(settings, systemPrompt, elementPrompt);
     }
 
     async callProviderAPI(
@@ -462,24 +599,27 @@ ${paragraph}
         return data.choices[0].message.content;
     }
 
-    displayError(paragraph: HTMLParagraphElement) {
-        const wrapper = paragraph.closest('.paragraph-wrapper');
+    displaySummary(element: HTMLElement, summary: string) {
+        const wrapper = element.closest('.paragraph-wrapper');
         if (!wrapper) return;
+
         const summaryDiv = wrapper.querySelector('.summary-content');
         if (!summaryDiv) return;
-        summaryDiv.innerHTML = `<div class="error-message">总结失败，点击重试</div>`;
-        (summaryDiv as HTMLElement).onclick = () => this.summarizeParagraph(paragraph);
+
+        summaryDiv.innerHTML = summary;
+        (summaryDiv as HTMLElement).style.display = 'block';
+        this.summarizedElements.add(element.id);
     }
 
-    displaySummary(paragraph: HTMLParagraphElement, summary: string) {
-        const wrapper = paragraph.closest('.paragraph-wrapper');
+    displayError(element: HTMLElement) {
+        const wrapper = element.closest('.paragraph-wrapper');
         if (!wrapper) return;
+
         const summaryDiv = wrapper.querySelector('.summary-content');
         if (!summaryDiv) return;
-        summaryDiv.textContent = summary;
+
+        summaryDiv.innerHTML = '总结生成失败，请稍后重试。';
         (summaryDiv as HTMLElement).style.display = 'block';
-        paragraph.style.opacity = '0.2';
-        this.summarizedParagraphs.add(paragraph.id);
     }
 
     async saveToCache(paragraphId: string, summary: string) {
