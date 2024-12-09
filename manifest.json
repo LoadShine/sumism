@@ -1,15 +1,24 @@
 {
   "manifest_version": 3,
-  "name": "SUMISM",
-  "version": "1.0",
-  "description": "使用AI智能总结网页内容",
+  "name": "Summary Extension",
+  "version": "1.0.0",
+  "description": "A Chrome extension for summarizing web page content.",
+  "action": {
+    "default_popup": "public/popup.html",
+    "default_icon": {
+      "16": "public/icon.png",
+      "48": "public/icon.png",
+      "128": "public/icon.png"
+    }
+  },
   "permissions": [
-    "contextMenus",
+    "activeTab",
     "storage",
-    "activeTab"
+    "contextMenus"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "src/background/background.js",
+    "type": "module"
   },
   "content_scripts": [
     {
@@ -17,28 +26,11 @@
         "<all_urls>"
       ],
       "js": [
-        "content.js"
-      ],
-      "css": [
-        "styles.css"
+        "src/content/content.js"
       ]
     }
   ],
-  "icons": {
-    "16": "icons/star-16.png",
-    "32": "icons/star-32.png",
-    "48": "icons/star-48.png",
-    "128": "icons/star-128.png",
-    "256": "icons/star-256.png"
-  },
-  "action": {
-    "default_popup": "popup.html",
-    "default_icon": {
-      "16": "icons/star-16.png",
-      "32": "icons/star-32.png",
-      "48": "icons/star-48.png",
-      "128": "icons/star-128.png",
-      "256": "icons/star-256.png"
-    }
-  }
+  "host_permissions": [
+    "<all_urls>"
+  ]
 }
