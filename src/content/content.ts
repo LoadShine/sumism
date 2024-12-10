@@ -32,6 +32,7 @@ class SummaryLengthCalculator {
 }
 
 class ContentSummarizer {
+    private static instance: ContentSummarizer | null = null;
     private observer: IntersectionObserver | null = null;
     private summarizedParagraphs: Set<string> = new Set();
     private requestQueue: {
@@ -41,6 +42,20 @@ class ContentSummarizer {
     }[] = [];
     private activeRequests: number = 0;
     private maxConcurrentRequests: number = 10;
+    private paragraphEventListeners: {
+        paragraph: HTMLParagraphElement;
+        listener: () => void;
+    }[] = [];
+
+    // Private constructor to enforce singleton pattern
+    private constructor() { }
+
+    static getInstance(): ContentSummarizer {
+        if (!ContentSummarizer.instance) {
+            ContentSummarizer.instance = new ContentSummarizer();
+        }
+        return ContentSummarizer.instance;
+    }
 
     async initialize() {
         // Check if already initialized to prevent duplicate work
@@ -153,6 +168,10 @@ ${paragraph}
     }
 
     setupIntersectionObserver() {
+        if (this.observer) {
+            return; // Prevent creating multiple observers
+        }
+
         this.observer = new IntersectionObserver(
             (entries) => {
                 entries.forEach((entry) => {
@@ -188,12 +207,16 @@ ${paragraph}
         });
 
         // 尝试处理队列
-        this.processQueue();
+        await this.processQueue();
 
         return requestPromise;
     }
 
     async processQueue() {
+
+        console.log(this.observer)
+
+
         // 如果已经达到并发限制或队列为空，则返回
         if (
             this.activeRequests >= this.maxConcurrentRequests ||
@@ -459,6 +482,8 @@ ${paragraph}
     }
 
     displaySummary(paragraph: HTMLParagraphElement, summary: string) {
+        console.log('Summary:', summary);
+
         const wrapper = paragraph.closest('.paragraph-wrapper');
         if (!wrapper) return;
         const summaryDiv = wrapper.querySelector('.summary-content');
@@ -481,18 +506,47 @@ ${paragraph}
     }
 
     async hideSummaries() {
-        document.querySelectorAll('.summary-content').forEach((summary) => {
-            (summary as HTMLElement).style.display = 'none';
+        // Disconnect the IntersectionObserver if it exists
+        if (this.observer) {
+            this.observer.disconnect();
+            this.observer = null;
+        }
+
+        // Clear the request queue
+        this.requestQueue = [];
+        this.activeRequests = 0;
+
+        // Clear the set of summarized paragraphs
+        this.summarizedParagraphs.clear();
+
+        // Remove event listeners from paragraphs
+        this.paragraphEventListeners.forEach(({ paragraph, listener }) => {
+            paragraph.removeEventListener('click', listener);
         });
-        document.querySelectorAll('.paragraph-wrapper p').forEach((p) => {
-            (p as HTMLElement).style.opacity = '1';
+        this.paragraphEventListeners = [];
+
+        // Hide all summary divs
+        const allWrappers = document.querySelectorAll('.paragraph-wrapper');
+        allWrappers.forEach(wrapper => {
+            const summaryDiv = wrapper.querySelector('.summary-content');
+            if (summaryDiv) {
+                (summaryDiv as HTMLElement).style.display = 'none';
+                summaryDiv.textContent = '';
+            }
+
+            const paragraph = wrapper.querySelector('p');
+            if (paragraph) {
+                paragraph.style.opacity = '1';
+            }
         });
 
-        // 移除状态标记元素
+        // Remove the state marker
         const marker = document.getElementById('summary-state-marker');
         if (marker) {
             marker.remove();
         }
+
+        console.log('Observer after disconnection:', this.observer);
 
         chrome.runtime.sendMessage({
             action: 'updateContextMenu',
@@ -508,14 +562,14 @@ chrome.runtime.onMessage.addListener(
         sender: chrome.runtime.MessageSender,
         sendResponse: (response?: any) => void,
     ) => {
-        const summarizer = new ContentSummarizer();
+        const summarizer = ContentSummarizer.getInstance(); // Get the singleton instance
 
         if (request.action === 'initializeSummary') {
             summarizer.initialize();
         } else if (request.action === 'hideSummaries') {
             summarizer.hideSummaries();
         } else if (request.action === 'checkSummaryState') {
-            // 检查是否存在summary-state-marker
+            // Check for the existence of the summary-state-marker
             sendResponse(!!document.getElementById('summary-state-marker'));
         }
     },

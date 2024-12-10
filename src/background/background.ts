@@ -20,11 +20,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 async function updateMenuState(tabId: number) {
     chrome.tabs.sendMessage(tabId, { action: 'checkSummaryState' }, (isShowing) => {
-        console.log('showing', isShowing);
-
-
-
-
         if (chrome.runtime.lastError) return;
 
         chrome.contextMenus.update('summarizeContent', {
