@@ -1,3 +1,5 @@
+import type {AISettings} from "@/types";
+
 class SummaryLengthCalculator {
     static calculateOverallSummaryLength(fullText: string): number {
         const wordCount = this.getWordCount(fullText);
@@ -46,6 +48,21 @@ class ContentSummarizer {
         paragraph: HTMLParagraphElement;
         listener: () => void;
     }[] = [];
+    private sidebar: HTMLDivElement | null = null;
+    private overallSummary: string | null = null;
+    private overallSummarySentences: string[] = [];
+    private systemPrompt: string = '';
+    private aiSettings: AISettings = {
+        provider: 'openai',
+        apiKey: '',
+        model: 'gpt-3.5-turbo',
+        customApiUrl: '',
+        customModelName: '',
+        useCustomPrompt: false,
+        systemPrompt: '',
+        userPrompt: '',
+        summaryLanguage: 'auto'
+    };
 
     // Private constructor to enforce singleton pattern
     private constructor() { }
@@ -64,16 +81,16 @@ class ContentSummarizer {
         }
 
         // Find the main content container
-        const mainContentContainer = this.findMainContentContainer();
-
-        if (!mainContentContainer) {
-            console.warn("Could not find the main content container.");
-            return;
-        }
-
-        // Select p, ul, ol, and table elements within the main content container
-        const elements = mainContentContainer.querySelectorAll('p, ul, ol, table');
-
+        // const mainContentContainer = this.findMainContentContainer();
+        //
+        // if (!mainContentContainer) {
+        //     console.warn("Could not find the main content container.");
+        //     return;
+        // }
+        //
+        // // Select p, ul, ol, and table elements within the main content container
+        // const elements = mainContentContainer.querySelectorAll('p, ul, ol, table');
+        const elements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
         elements.forEach((el, index) => {
             if (!el.id) {
                 el.id = `content-element-${index}`;
@@ -82,6 +99,7 @@ class ContentSummarizer {
         });
 
         this.setupIntersectionObserver();
+        this.createSidebar();
 
         // Add the summary state marker (as before)
         const summaryStateMarker = document.createElement('div');
@@ -89,10 +107,44 @@ class ContentSummarizer {
         summaryStateMarker.style.display = 'none';
         document.body.appendChild(summaryStateMarker);
 
+        // 获取整体总结
+        // 获取所有元素内容
+        // const elements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
+        const fullText = elements.map((el) => el.textContent).join('\n');
+        // 获取存储的设置
+        const settings = await chrome.storage.local.get('aiSettings');
+        this.aiSettings = settings.aiSettings || {};
+
+        const systemPrompt = this.aiSettings.useCustomPrompt
+            ? this.aiSettings.systemPrompt
+            : this.getDefaultSystemPrompt();
+
+        const overallSummaryPrompt = this.aiSettings.useCustomPrompt
+            ? this.aiSettings.userPrompt!.replace('{full_text}', fullText)
+            : this.getOverallSummaryPrompt(fullText);
+
+        this.overallSummary = await this.callProviderAPI(
+            this.aiSettings,
+            systemPrompt!,
+            overallSummaryPrompt,
+        );
+
+        // Display overall summary in the sidebar
+        if (!this.sidebar) {
+            this.createSidebar();
+        }
+        this.displayOverallSummary(this.overallSummary!);
+
         chrome.runtime.sendMessage({
             action: 'updateContextMenu',
             hasSummaries: true,
         });
+    }
+
+    createSidebar() {
+        this.sidebar = document.createElement('div');
+        this.sidebar.id = 'summary-sidebar';
+        document.body.appendChild(this.sidebar);
     }
 
     findMainContentContainer(): HTMLElement | null {
@@ -158,18 +210,21 @@ class ContentSummarizer {
     }
 
     getOverallSummaryPrompt(fullText: string): string {
-        const targetLength =
-            SummaryLengthCalculator.calculateOverallSummaryLength(fullText);
+        const targetLength = SummaryLengthCalculator.calculateOverallSummaryLength(fullText);
 
-        return `请对以下文章进行整体总结：
+        return `请对以下文章进行整体总结。在总结的每一句话后面，用方括号标明这句话主要对应原文的哪几个段落。例如“[P1]”表示对应第一个段落，“[P3-P5]”表示对应第三到第五个段落，“[P2,P6]”表示对应第二和第六个段落。如果一句话对应多个不连续的段落，请用逗号分隔。
 
-${fullText}
-
-要求：
-1. 提炼文章的核心主题和主要观点
-2. 总结篇幅控制在${targetLength}字以内
-3. 突出文章的逻辑框架和重点内容
-4. 保持总结的连贯性和完整性`;
+        文章内容：
+        ${fullText}
+    
+        要求：
+        1. 提炼文章的核心主题和主要观点。
+        2. 在每句话后面清晰地标明它对应的原文段落编号（例如 [P1], [P3-P5], [P2,P6]）。
+        3. 总结篇幅控制在${targetLength}字以内。
+        4. 突出文章的逻辑框架和重点内容。
+        5. 保持总结的连贯性和完整性。
+    
+        你的总结应该能够清晰地映射回原文的各个部分，便于读者理解每句话的来源和上下文。请严格按照“[P数字]”的格式来标记段落对应关系。`;
     }
 
     getParagraphSummaryPrompt(
@@ -270,11 +325,7 @@ ${paragraph}
         this.activeRequests++;
 
         try {
-            // 获取存储的设置
-            const settings = await chrome.storage.local.get('aiSettings');
-            const aiSettings = settings.aiSettings || {};
-
-            const settingHashString = btoa(JSON.stringify(aiSettings));
+            const settingHashString = btoa(JSON.stringify(this.aiSettings));
 
             // 检查缓存
             const cachedSummary = await this.getFromCache(
@@ -300,7 +351,7 @@ ${paragraph}
                 try {
                     const summary = await this.callAIAPI(
                         request.paragraph.textContent || '',
-                        aiSettings,
+                        this.aiSettings,
                     );
                     await this.saveToCache(
                         settingHashString + '_' + request.paragraph.id,
@@ -324,31 +375,91 @@ ${paragraph}
         }
     }
 
+    highlightParagraphsForSentence(sentenceIndex: number) {
+        if (!this.sidebar) return;
+
+        const sentence = this.overallSummarySentences[sentenceIndex];
+        const paragraphElements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
+
+        // Reset any previous highlighting
+        paragraphElements.forEach(el => {
+            el.classList.remove('highlighted-paragraph');
+        });
+        const activeSentenceDivs = this.sidebar.querySelectorAll('.overall-summary-item.active');
+        activeSentenceDivs.forEach(div => div.classList.remove('active'));
+
+        // Basic Fuzzy Matching (example using simple similarity score)
+        const bestMatches = this.findBestParagraphMatches(sentence, paragraphElements, 2); // Get top 2 matches
+
+        // Scroll to the first matched paragraph and highlight all matches
+        if (bestMatches.length > 0) {
+            bestMatches[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+            bestMatches.forEach(match => match.classList.add('highlighted-paragraph'));
+            // Add style for highlighted paragraphs
+            const style = document.createElement('style');
+            style.textContent += `
+                .highlighted-paragraph {
+                    background-color: yellow;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        // Highlight the active sentence
+        const sentenceDiv = this.sidebar.querySelectorAll('.overall-summary-item')[sentenceIndex];
+        if (sentenceDiv) {
+            sentenceDiv.classList.add('active');
+        }
+    }
+
+    // Simple similarity function (you'll need to improve this)
+    calculateSimilarity(sentence: string, paragraphText: string): number {
+        const sentenceWords = new Set(sentence.toLowerCase().match(/\w+/g));
+        const paragraphWords = new Set(paragraphText.toLowerCase().match(/\w+/g));
+
+        const commonWords = new Set([...sentenceWords].filter(x => paragraphWords.has(x)));
+
+        return commonWords.size / sentenceWords.size; // Jaccard similarity (very basic)
+    }
+
+    findBestParagraphMatches(sentence: string, paragraphs: Element[], numMatches: number): Element[] {
+        const scores = paragraphs.map(p => ({
+            paragraph: p,
+            score: this.calculateSimilarity(sentence, p.textContent || ''),
+        }));
+
+        scores.sort((a, b) => b.score - a.score);
+
+        return scores.slice(0, numMatches).map(s => s.paragraph);
+    }
+
+    displayOverallSummary(overallSummary: string) {
+        if (!this.sidebar) return;
+
+        const overallSummarySection = document.createElement('div');
+        overallSummarySection.className = 'overall-summary-section';
+        overallSummarySection.innerHTML = '<h3>整体总结</h3>';
+        this.sidebar.appendChild(overallSummarySection);
+
+        // Split the summary into sentences (basic approach, might need refinement)
+        this.overallSummarySentences = overallSummary.split(/[。！？]/).filter(sentence => sentence.trim() !== '');
+
+        this.overallSummarySentences.forEach((sentence, index) => {
+            const sentenceDiv = document.createElement('div');
+            sentenceDiv.className = 'overall-summary-item';
+            sentenceDiv.textContent = sentence;
+            sentenceDiv.addEventListener('click', () => this.highlightParagraphsForSentence(index));
+            overallSummarySection.appendChild(sentenceDiv);
+        });
+    }
+
     async callAIAPI(text: string, settings: any) {
-        // 获取所有元素内容
-        const elements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
-        const fullText = elements.map((el) => el.textContent).join('\n');
-        // 第一步：获取整体总结
-        const systemPrompt = settings.useCustomPrompt
-            ? settings.systemPrompt
-            : this.getDefaultSystemPrompt();
-
-        const overallSummaryPrompt = settings.useCustomPrompt
-            ? settings.userPrompt.replace('{full_text}', fullText)
-            : this.getOverallSummaryPrompt(fullText);
-
-        const overallSummary = await this.callProviderAPI(
-            settings,
-            systemPrompt,
-            overallSummaryPrompt,
-        );
-
-        // 第二步：获取元素总结
+        // 获取元素总结
         const paragraphPrompt = settings.useCustomPrompt
             ? settings.userPrompt.replace('{paragraph}', text)
-            : this.getParagraphSummaryPrompt(overallSummary, text);
+            : this.getParagraphSummaryPrompt(this.overallSummary!, text);
 
-        return this.callProviderAPI(settings, systemPrompt, paragraphPrompt);
+        return this.callProviderAPI(settings, this.systemPrompt, paragraphPrompt);
     }
 
     async callProviderAPI(
@@ -582,6 +693,19 @@ ${paragraph}
         if (marker) {
             marker.remove();
         }
+
+        // Remove the sidebar
+        if (this.sidebar) {
+            this.sidebar.remove();
+            this.sidebar = null;
+        }
+
+        // Remove highlighted paragraphs
+        const highlightedParagraphs = document.querySelectorAll('.highlighted-paragraph');
+        highlightedParagraphs.forEach(p => p.classList.remove('highlighted-paragraph'));
+
+        this.overallSummary = null;
+        this.overallSummarySentences = [];
 
         console.log('Observer after disconnection:', this.observer);
 
