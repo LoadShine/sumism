@@ -36,7 +36,7 @@ class ContentSummarizer {
     private observer: IntersectionObserver | null = null;
     private summarizedParagraphs: Set<string> = new Set();
     private requestQueue: {
-        paragraph: HTMLParagraphElement;
+        paragraph: HTMLElement;
         resolve: (value: void | PromiseLike<void>) => void;
         reject: (reason?: any) => void;
     }[] = [];
@@ -58,22 +58,32 @@ class ContentSummarizer {
     }
 
     async initialize() {
-        // Check if already initialized to prevent duplicate work
+        // Check if already initialized
         if (document.getElementById('summary-state-marker')) {
             return;
         }
 
-        // Rest of the existing initialization logic remains the same
-        const paragraphs = document.querySelectorAll('p');
-        paragraphs.forEach((p, index) => {
-            if (!p.id) {
-                p.id = `paragraph-${index}`;
+        // Find the main content container
+        const mainContentContainer = this.findMainContentContainer();
+
+        if (!mainContentContainer) {
+            console.warn("Could not find the main content container.");
+            return;
+        }
+
+        // Select p, ul, ol, and table elements within the main content container
+        const elements = mainContentContainer.querySelectorAll('p, ul, ol, table');
+
+        elements.forEach((el, index) => {
+            if (!el.id) {
+                el.id = `content-element-${index}`;
             }
-            this.wrapParagraph(p);
+            this.wrapParagraph(el); // Updated to handle ul, ol, and table
         });
 
         this.setupIntersectionObserver();
 
+        // Add the summary state marker (as before)
         const summaryStateMarker = document.createElement('div');
         summaryStateMarker.id = 'summary-state-marker';
         summaryStateMarker.style.display = 'none';
@@ -83,6 +93,34 @@ class ContentSummarizer {
             action: 'updateContextMenu',
             hasSummaries: true,
         });
+    }
+
+    findMainContentContainer(): HTMLElement | null {
+        // Strategy 1: Semantic HTML5 Elements
+        let container = document.querySelector('article') || document.querySelector('main') || document.querySelector('[role="main"]');
+        if (container) return container;
+
+        // Strategy 2: Common Class or ID Names
+        const commonIdentifiers = ['content', 'main-content', 'main'];
+        for (const id of commonIdentifiers) {
+            container = document.getElementById(id) || document.querySelector(`.${id}`);
+            if (container) return container;
+        }
+
+        // Strategy 3: Heuristic Approach (select the container with the most target elements)
+        const allContainers = document.querySelectorAll('div'); // You might need to refine this selector
+        let bestContainer = null;
+        let maxCount = 0;
+
+        allContainers.forEach(div => {
+            const count = div.querySelectorAll('p, ul, ol, table').length;
+            if (count > maxCount) {
+                maxCount = count;
+                bestContainer = div;
+            }
+        });
+
+        return bestContainer;
     }
 
     getDefaultSystemPrompt(): string {
@@ -155,16 +193,16 @@ ${paragraph}
 5. 确保总结与上下文逻辑连贯`;
     }
 
-    wrapParagraph(paragraph: HTMLParagraphElement) {
+    wrapParagraph(element: Element) {
         const wrapper = document.createElement('div');
-        wrapper.className = 'paragraph-wrapper';
-        paragraph.parentNode?.insertBefore(wrapper, paragraph);
-        wrapper.appendChild(paragraph);
+        wrapper.className = 'paragraph-wrapper'; // Keep the same class name for consistency
+        element.parentNode?.insertBefore(wrapper, element);
+        wrapper.appendChild(element);
 
         const summaryDiv = document.createElement('div');
         summaryDiv.className = 'summary-content';
         summaryDiv.style.display = 'none';
-        wrapper.insertBefore(summaryDiv, paragraph);
+        wrapper.insertBefore(summaryDiv, element);
     }
 
     setupIntersectionObserver() {
@@ -176,9 +214,9 @@ ${paragraph}
             (entries) => {
                 entries.forEach((entry) => {
                     if (entry.isIntersecting) {
-                        const paragraph = entry.target.querySelector('p');
-                        if (paragraph && !this.summarizedParagraphs.has(paragraph.id)) {
-                            this.summarizeParagraph(paragraph);
+                        const element = entry.target.querySelector('p') || entry.target.querySelector('ul') || entry.target.querySelector('ol') || entry.target.querySelector('table');
+                        if (element && !this.summarizedParagraphs.has(element.id)) {
+                            this.summarizeParagraph(element);
                         }
                     }
                 });
@@ -191,16 +229,16 @@ ${paragraph}
         });
     }
 
-    async summarizeParagraph(paragraph: HTMLParagraphElement) {
+    async summarizeParagraph(element: HTMLElement) {
         // 如果已经在队列中,不要重复添加
-        if (this.requestQueue.some((req) => req.paragraph.id === paragraph.id)) {
+        if (this.requestQueue.some((req) => req.paragraph.id === element.id)) {
             return;
         }
 
         // 创建一个Promise来处理请求
         const requestPromise = new Promise<void>((resolve, reject) => {
             this.requestQueue.push({
-                paragraph,
+                paragraph: element,
                 resolve,
                 reject,
             });
@@ -287,10 +325,9 @@ ${paragraph}
     }
 
     async callAIAPI(text: string, settings: any) {
-        // 获取所有段落内容
-        const paragraphs = Array.from(document.querySelectorAll('p'));
-        const fullText = paragraphs.map((p) => p.textContent).join('\n');
-
+        // 获取所有元素内容
+        const elements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
+        const fullText = elements.map((el) => el.textContent).join('\n');
         // 第一步：获取整体总结
         const systemPrompt = settings.useCustomPrompt
             ? settings.systemPrompt
@@ -306,7 +343,7 @@ ${paragraph}
             overallSummaryPrompt,
         );
 
-        // 第二步：获取段落总结
+        // 第二步：获取元素总结
         const paragraphPrompt = settings.useCustomPrompt
             ? settings.userPrompt.replace('{paragraph}', text)
             : this.getParagraphSummaryPrompt(overallSummary, text);
@@ -472,26 +509,26 @@ ${paragraph}
         return data.choices[0].message.content;
     }
 
-    displayError(paragraph: HTMLParagraphElement) {
-        const wrapper = paragraph.closest('.paragraph-wrapper');
+    displayError(element: HTMLElement) {
+        const wrapper = element.closest('.paragraph-wrapper');
         if (!wrapper) return;
         const summaryDiv = wrapper.querySelector('.summary-content');
         if (!summaryDiv) return;
         summaryDiv.innerHTML = `<div class="error-message">总结失败，点击重试</div>`;
-        (summaryDiv as HTMLElement).onclick = () => this.summarizeParagraph(paragraph);
+        (summaryDiv as HTMLElement).onclick = () => this.summarizeParagraph(element);
     }
 
-    displaySummary(paragraph: HTMLParagraphElement, summary: string) {
+    displaySummary(element: HTMLElement, summary: string) {
         console.log('Summary:', summary);
 
-        const wrapper = paragraph.closest('.paragraph-wrapper');
+        const wrapper = element.closest('.paragraph-wrapper');
         if (!wrapper) return;
         const summaryDiv = wrapper.querySelector('.summary-content');
         if (!summaryDiv) return;
         summaryDiv.textContent = summary;
         (summaryDiv as HTMLElement).style.display = 'block';
-        paragraph.style.opacity = '0.2';
-        this.summarizedParagraphs.add(paragraph.id);
+        element.style.opacity = '0.2';
+        this.summarizedParagraphs.add(element.id);
     }
 
     async saveToCache(paragraphId: string, summary: string) {

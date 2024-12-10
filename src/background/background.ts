@@ -22,9 +22,16 @@ async function updateMenuState(tabId: number) {
     chrome.tabs.sendMessage(tabId, { action: 'checkSummaryState' }, (isShowing) => {
         if (chrome.runtime.lastError) return;
 
-        chrome.contextMenus.update('summarizeContent', {
-            title: isShowing ? '隐藏总结' : '页面总结',
-        });
+        if (isShowing === undefined) {
+            chrome.contextMenus.update('summarizeContent', {
+                title: '页面总结'
+            });
+            return;
+        } else {
+            chrome.contextMenus.update('summarizeContent', {
+                title: isShowing ? '隐藏总结' : '页面总结',
+            });
+        }
     });
 }
 
