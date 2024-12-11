@@ -13,9 +13,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 
 // 在标签页URL更新时更新菜单状态
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-    if (changeInfo.url) {
-        await updateMenuState(tabId);
-    }
+    await updateMenuState(tabId);
 });
 
 async function updateMenuState(tabId: number) {

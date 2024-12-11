@@ -5,8 +5,8 @@ class SummaryLengthCalculator {
         const wordCount = this.getWordCount(fullText);
         // 整体总结长度约为原文的 10%-15%
         return Math.max(
-            100, // 最小长度
-            Math.min(Math.ceil(wordCount * 0.15), 500), // 最大长度
+            300, // 最小长度
+            Math.min(Math.ceil(wordCount * 0.3), 1000), // 最大长度
         );
     }
 
@@ -81,15 +81,6 @@ class ContentSummarizer {
         }
 
         // Find the main content container
-        // const mainContentContainer = this.findMainContentContainer();
-        //
-        // if (!mainContentContainer) {
-        //     console.warn("Could not find the main content container.");
-        //     return;
-        // }
-        //
-        // // Select p, ul, ol, and table elements within the main content container
-        // const elements = mainContentContainer.querySelectorAll('p, ul, ol, table');
         const elements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
         elements.forEach((el, index) => {
             if (!el.id) {
@@ -98,7 +89,6 @@ class ContentSummarizer {
             this.wrapParagraph(el); // Updated to handle ul, ol, and table
         });
 
-        this.setupIntersectionObserver();
         this.createSidebar();
 
         // Add the summary state marker (as before)
@@ -108,8 +98,6 @@ class ContentSummarizer {
         document.body.appendChild(summaryStateMarker);
 
         // 获取整体总结
-        // 获取所有元素内容
-        // const elements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
         const fullText = elements.map((el) => el.textContent).join('\n');
         // 获取存储的设置
         const settings = await chrome.storage.local.get('aiSettings');
@@ -129,11 +117,15 @@ class ContentSummarizer {
             overallSummaryPrompt,
         );
 
+        this.overallSummary = this.formatOverallSummary(this.overallSummary!);
+
         // Display overall summary in the sidebar
         if (!this.sidebar) {
             this.createSidebar();
         }
         this.displayOverallSummary(this.overallSummary!);
+
+        this.setupIntersectionObserver();
 
         chrome.runtime.sendMessage({
             action: 'updateContextMenu',
@@ -141,10 +133,50 @@ class ContentSummarizer {
         });
     }
 
+    formatOverallSummary(input: string): string {
+        const lines = input.split('\n').map(line => line.trim()); // 按行分割并去掉多余的首尾空格
+        let result: string[] = [];
+
+        const regexStart = /^\[P\d+(-P\d+)?(,P\d+)*\]/; // 匹配以 [P数字] 开头
+        const regexEnd = /\[P\d+(-P\d+)?(,P\d+)*\]$/;  // 匹配以 [P数字] 结尾
+
+        for (const line of lines) {
+            if (regexStart.test(line)) {
+                // 如果行以 [P数字] 开头
+                const match = line.match(regexStart);
+                if (match) {
+                    const tag = match[0].trim(); // 提取 [P数字] 部分
+                    const sentence = line.slice(tag.length).trim(); // 保留 [P数字] 后面的空格
+                    result.push(`${tag} ${sentence}`);
+                }
+            } else if (regexEnd.test(line)) {
+                // 如果行以 [P数字] 结尾
+                const match = line.match(regexEnd);
+                if (match) {
+                    const tag = match[0].trim(); // 提取 [P数字] 部分
+                    const sentence = line.slice(0, -tag.length).trim(); // 保留结尾前的空格
+                    result.push(`${tag} ${sentence}`);
+                }
+            } else {
+                // 如果行既不以 [P数字] 开头也不以其结尾，原样加入
+                result.push(line);
+            }
+        }
+
+        // result去除空元素
+        result = result.filter(line => line.trim() !== '');
+        return result.join('\n');
+    }
+
     createSidebar() {
         this.sidebar = document.createElement('div');
         this.sidebar.id = 'summary-sidebar';
         document.body.appendChild(this.sidebar);
+
+        // 在sidebar的正中心添加一个动画
+        const loadingSpinner = document.createElement('div');
+        loadingSpinner.className = 'sidebar-loading-spinner';
+        this.sidebar.appendChild(loadingSpinner);
     }
 
     findMainContentContainer(): HTMLElement | null {
@@ -211,20 +243,30 @@ class ContentSummarizer {
 
     getOverallSummaryPrompt(fullText: string): string {
         const targetLength = SummaryLengthCalculator.calculateOverallSummaryLength(fullText);
+        const firstLine = fullText.split('\n')[0].trim();
 
-        return `请对以下文章进行整体总结。在总结的每一句话后面，用方括号标明这句话主要对应原文的哪几个段落。例如“[P1]”表示对应第一个段落，“[P3-P5]”表示对应第三到第五个段落，“[P2,P6]”表示对应第二和第六个段落。如果一句话对应多个不连续的段落，请用逗号分隔。
+        return `请对以下文章进行整体总结。你的任务是创建一个详细的总结，其中每句话都必须清晰地映射回原文的一行或多行。
+---
+${fullText}
+---
+    具体要求：
+    1. 提炼文章的核心主题和主要观点，确保每个重要概念都在总结中有所体现。
+    2. 在总结的每一句话后面，用方括号标明这句话主要对应原文的哪几行。这是一个强制性要求，必须严格遵守。例如：
+        - “[P1]”表示这句话主要对应上述文章的第一行。
+        - “[P3-P5]”表示这句话对应上述文章的第三到第五行。
+        - “[P2,P6]”表示这句话对应上述文章的第二和第六行。
+        - 如果一句话概述了多个不连续的行，请用逗号分隔，如“[P1,P4,P7]”。
+    3. 请确保你的总结的每一句话都能够精准地对应到原文，但是不需要原文中的每一行都对应着总结。如果原文中的内容不重要，可以在总结中省略。
+    4. 总结篇幅控制在${targetLength}字以内。
+    5. 突出文章的逻辑框架和重点内容。
+    6. 保持总结的连贯性和完整性，同时确保每一句话都与其对应的原文紧密相关。
 
-        文章内容：
-        ${fullText}
-    
-        要求：
-        1. 提炼文章的核心主题和主要观点。
-        2. 在每句话后面清晰地标明它对应的原文段落编号（例如 [P1], [P3-P5], [P2,P6]）。
-        3. 总结篇幅控制在${targetLength}字以内。
-        4. 突出文章的逻辑框架和重点内容。
-        5. 保持总结的连贯性和完整性。
-    
-        你的总结应该能够清晰地映射回原文的各个部分，便于读者理解每句话的来源和上下文。请严格按照“[P数字]”的格式来标记段落对应关系。`;
+你的总结应该像一张详细的地图，能够清晰地指引读者回到原文的某一个或者某几个部分，让他们能够准确理解每句话的来源和上下文。
+请务必按照“[P数字]”的格式来标记与行的对应关系，这对读者理解总结与原文的关联至关重要。
+请以
+"${firstLine}"
+作为第一行[P1]，并以此类推，向后依次计算行数。请仔细检查，精准对应P后面的数字与行数，不要出现数字与原文行数不匹配的情况。
+你的首要任务是保证总结的准确性和与原文的精确对应。`;
     }
 
     getParagraphSummaryPrompt(
@@ -306,10 +348,6 @@ ${paragraph}
     }
 
     async processQueue() {
-
-        console.log(this.observer)
-
-
         // 如果已经达到并发限制或队列为空，则返回
         if (
             this.activeRequests >= this.maxConcurrentRequests ||
@@ -376,73 +414,80 @@ ${paragraph}
     }
 
     highlightParagraphsForSentence(sentenceIndex: number) {
-        if (!this.sidebar) return;
-
-        const sentence = this.overallSummarySentences[sentenceIndex];
+        const sentenceWithBrackets = this.overallSummarySentences[sentenceIndex];
         const paragraphElements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
 
         // Reset any previous highlighting
         paragraphElements.forEach(el => {
             el.classList.remove('highlighted-paragraph');
         });
-        const activeSentenceDivs = this.sidebar.querySelectorAll('.overall-summary-item.active');
+        const activeSentenceDivs = this.sidebar!.querySelectorAll('.overall-summary-item.active');
         activeSentenceDivs.forEach(div => div.classList.remove('active'));
 
-        // Basic Fuzzy Matching (example using simple similarity score)
-        const bestMatches = this.findBestParagraphMatches(sentence, paragraphElements, 2); // Get top 2 matches
+        // Extract paragraph references from the sentence using a regular expression
+        const match = sentenceWithBrackets.match(/\[P\d+(-P\d+)?(,P\d+)*\]/g);
 
-        // Scroll to the first matched paragraph and highlight all matches
-        if (bestMatches.length > 0) {
-            bestMatches[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
-            bestMatches.forEach(match => match.classList.add('highlighted-paragraph'));
+        if (match) {
+            const allParagraphReferences: number[] = [];
+            match.forEach(bracketedRef => {
+                const ref = bracketedRef.slice(1, -1); // Remove the square brackets: "P1" or "P3-P5" or "P2,P6"
+                if (ref.includes('-')) {
+                    // Handle range like "P3-P5"
+                    const [start, end] = ref.replaceAll('P', '').split('-').map(Number); // Remove the "P" and split
+                    for (let i = start; i <= end; i++) {
+                        allParagraphReferences.push(i);
+                    }
+                } else if (ref.includes(',')) {
+                    // Handle multiple references like "P2,P6"
+                    const refs = ref.replaceAll('P', '').split(',').map(Number); // Remove the "P" and split
+                    allParagraphReferences.push(...refs);
+                } else {
+                    // Single reference like "P1"
+                    allParagraphReferences.push(Number(ref.slice(1))); // Remove the "P"
+                }
+            });
+
+            // Highlight the referenced paragraphs
+            allParagraphReferences.forEach(refIndex => {
+                const paragraphIndex = refIndex - 1; // Adjust to 0-based indexing
+                if (paragraphIndex >= 0 && paragraphIndex < paragraphElements.length) {
+                    paragraphElements[paragraphIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    paragraphElements[paragraphIndex].classList.add('highlighted-paragraph');
+                }
+            });
+
             // Add style for highlighted paragraphs
             const style = document.createElement('style');
             style.textContent += `
-                .highlighted-paragraph {
-                    background-color: yellow;
-                }
-            `;
+            .highlighted-paragraph {
+                background-color: yellow;
+            }
+        `;
             document.head.appendChild(style);
         }
 
         // Highlight the active sentence
-        const sentenceDiv = this.sidebar.querySelectorAll('.overall-summary-item')[sentenceIndex];
+        const sentenceDiv = this.sidebar!.querySelectorAll('.overall-summary-item')[sentenceIndex];
         if (sentenceDiv) {
             sentenceDiv.classList.add('active');
         }
     }
 
-    // Simple similarity function (you'll need to improve this)
-    calculateSimilarity(sentence: string, paragraphText: string): number {
-        const sentenceWords = new Set(sentence.toLowerCase().match(/\w+/g));
-        const paragraphWords = new Set(paragraphText.toLowerCase().match(/\w+/g));
-
-        const commonWords = new Set([...sentenceWords].filter(x => paragraphWords.has(x)));
-
-        return commonWords.size / sentenceWords.size; // Jaccard similarity (very basic)
-    }
-
-    findBestParagraphMatches(sentence: string, paragraphs: Element[], numMatches: number): Element[] {
-        const scores = paragraphs.map(p => ({
-            paragraph: p,
-            score: this.calculateSimilarity(sentence, p.textContent || ''),
-        }));
-
-        scores.sort((a, b) => b.score - a.score);
-
-        return scores.slice(0, numMatches).map(s => s.paragraph);
-    }
-
     displayOverallSummary(overallSummary: string) {
         if (!this.sidebar) return;
+
+        // Remove the loading spinner
+        const loadingSpinner = this.sidebar.querySelector('.sidebar-loading-spinner');
+        if (loadingSpinner) {
+            loadingSpinner.remove();
+        }
 
         const overallSummarySection = document.createElement('div');
         overallSummarySection.className = 'overall-summary-section';
         overallSummarySection.innerHTML = '<h3>整体总结</h3>';
         this.sidebar.appendChild(overallSummarySection);
 
-        // Split the summary into sentences (basic approach, might need refinement)
-        this.overallSummarySentences = overallSummary.split(/[。！？]/).filter(sentence => sentence.trim() !== '');
+        this.overallSummarySentences = overallSummary.split(/\n/).filter(sentence => sentence.trim() !== '');
 
         this.overallSummarySentences.forEach((sentence, index) => {
             const sentenceDiv = document.createElement('div');
@@ -630,8 +675,6 @@ ${paragraph}
     }
 
     displaySummary(element: HTMLElement, summary: string) {
-        console.log('Summary:', summary);
-
         const wrapper = element.closest('.paragraph-wrapper');
         if (!wrapper) return;
         const summaryDiv = wrapper.querySelector('.summary-content');
@@ -706,8 +749,6 @@ ${paragraph}
 
         this.overallSummary = null;
         this.overallSummarySentences = [];
-
-        console.log('Observer after disconnection:', this.observer);
 
         chrome.runtime.sendMessage({
             action: 'updateContextMenu',
