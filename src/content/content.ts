@@ -1,4 +1,5 @@
 import type {AISettings} from "@/types";
+import {stringToHash} from "@/utils";
 
 class TokenCalculator {
     static estimateTokens(text: string): number {
@@ -129,6 +130,9 @@ class ContentSummarizer {
             return;
         }
 
+        const settings = await chrome.storage.local.get('aiSettings');
+        this.aiSettings = settings.aiSettings || {};
+
         const elements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
         elements.forEach((el, index) => {
             if (!el.id) {
@@ -140,26 +144,35 @@ class ContentSummarizer {
         this.createSidebar();
 
         const fullText = elements.map((el) => el.textContent).join('\n');
-        const templateTokens = 500; // Approximate tokens for templates
+        const templateTokens = 1300; // Approximate tokens for templates
         const tokenEstimate = TokenCalculator.calculateTotalTokens(fullText, templateTokens);
 
-        const TOKEN_THRESHOLD = 10000;
+        const TOKEN_THRESHOLD = 20000;
 
-        if (tokenEstimate.total <= TOKEN_THRESHOLD) {
-            this.displayTokenInfo(tokenEstimate);
+        const cacheKeys = await chrome.storage.local.getKeys();
+
+        // 判断是否存在overallSummary以及paragraphSummary的缓存
+        const settingHashString: number = stringToHash(btoa(JSON.stringify(this.aiSettings)));
+        const overallSummaryCacheKey = `overall_summary_${window.location.href}_${settingHashString}`;
+        const paragraphSummaryCacheKeyPrefix = `summary_${window.location.href}_${settingHashString}`;
+        const hasSummaryCache = cacheKeys.includes(overallSummaryCacheKey) &&
+            cacheKeys.some(key => key.startsWith(paragraphSummaryCacheKeyPrefix));
+
+        if (hasSummaryCache || tokenEstimate.total <= TOKEN_THRESHOLD) {
+            this.displayTokenInfo(tokenEstimate, hasSummaryCache);
             await this.startSummarization(fullText);
         } else {
             await this.showTokenConfirmation(tokenEstimate, fullText);
         }
     }
 
-    private displayTokenInfo(tokenEstimate: { inputTokens: number; outputTokens: number; total: number }) {
+    private displayTokenInfo(tokenEstimate: { inputTokens: number; outputTokens: number; total: number }, fromCache = false) {
         const tokenInfo = document.createElement('div');
         tokenInfo.className = 'token-info';
         tokenInfo.innerHTML = `
         <div>预计消耗 Tokens:</div>
-        <div class="token-number">${tokenEstimate.total}</div>
-        <div>输入: ${tokenEstimate.inputTokens} / 输出: ${tokenEstimate.outputTokens}</div>
+        <div class="token-number">${fromCache ? '0' : tokenEstimate.total}</div>
+        <div>${fromCache ? '来自缓存' : '输入: ' + tokenEstimate.inputTokens + ' / 输出: ' + tokenEstimate.outputTokens}</div>
     `;
         this.sidebar?.prepend(tokenInfo);
     }
@@ -202,22 +215,19 @@ class ContentSummarizer {
     }
 
     private async saveOverallSummaryToCache(summary: string) {
-        const settingHashString = btoa(JSON.stringify(this.aiSettings));
+        const settingHashString = stringToHash(btoa(JSON.stringify(this.aiSettings)));
         const cacheKey = `overall_summary_${window.location.href}_${settingHashString}`;
         await chrome.storage.local.set({ [cacheKey]: summary });
     }
 
     private async getOverallSummaryFromCache(): Promise<string | null> {
-        const settingHashString = btoa(JSON.stringify(this.aiSettings));
+        const settingHashString = stringToHash(btoa(JSON.stringify(this.aiSettings)));
         const cacheKey = `overall_summary_${window.location.href}_${settingHashString}`;
         const result = await chrome.storage.local.get(cacheKey);
         return result[cacheKey] || null;
     }
 
     private async startSummarization(fullText: string) {
-        const settings = await chrome.storage.local.get('aiSettings');
-        this.aiSettings = settings.aiSettings || {};
-
         // Try to get cached overall summary first
         const cachedSummary = await this.getOverallSummaryFromCache();
         if (cachedSummary) {
@@ -505,7 +515,7 @@ ${paragraph}
 
             // Save to cache
             await this.saveToCache(
-                btoa(JSON.stringify(this.aiSettings)) + '_' + element.id,
+                stringToHash(btoa(JSON.stringify(this.aiSettings))) + '_' + element.id,
                 newContent
             );
         });
@@ -581,7 +591,7 @@ ${paragraph}
         this.activeRequests++;
 
         try {
-            const settingHashString = btoa(JSON.stringify(this.aiSettings));
+            const settingHashString = stringToHash(btoa(JSON.stringify(this.aiSettings)));
 
             // 检查缓存
             const cachedSummary = await this.getFromCache(
