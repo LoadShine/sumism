@@ -1,21 +1,71 @@
 import type {AISettings} from "@/types";
 
+class TokenCalculator {
+    static estimateTokens(text: string): number {
+        // Chinese characters (including punctuation)
+        const chineseMatches = text.match(/[\u4e00-\u9fff，。！？；：""''「」『』（）【】《》〈〉]/g) || [];
+        const chineseTokens = chineseMatches.length * 1.5;
+
+        // Remove Chinese characters for English calculation
+        const englishText = text.replace(/[\u4e00-\u9fff，。！？；：""''「」『』（）【】《》〈〉]/g, ' ');
+
+        // Calculate English tokens
+        const englishTokens = englishText.split(/\s+/)
+            .filter(word => word.length > 0)
+            .reduce((acc, word) => {
+                // Common patterns that affect tokenization
+                const capitalized = /^[A-Z]/.test(word) ? 0.1 : 0;
+                const specialChars = (word.match(/[^a-zA-Z0-9]/g) || []).length * 0.1;
+                const lengthFactor = Math.ceil(word.length / 4) * 0.2;
+                return acc + 1.3 + capitalized + specialChars + lengthFactor;
+            }, 0);
+
+        // Numbers and special characters
+        const numberTokens = (text.match(/\d+/g) || []).length * 0.5;
+
+        return Math.ceil(chineseTokens + englishTokens + numberTokens);
+    }
+
+    static calculateTotalTokens(fullText: string, templateTokens: number): {
+        inputTokens: number;
+        outputTokens: number;
+        total: number;
+    } {
+        const textTokens = this.estimateTokens(fullText);
+        const paragraphCount = fullText.split('\n').length;
+
+        const inputTokens = Math.ceil(
+            textTokens + // Original text
+            (textTokens * 0.2 * paragraphCount) + // Paragraph contexts
+            templateTokens // Template tokens
+        );
+
+        const outputTokens = Math.ceil(textTokens * 0.5);
+
+        return {
+            inputTokens,
+            outputTokens,
+            total: inputTokens + outputTokens
+        };
+    }
+}
+
 class SummaryLengthCalculator {
     static calculateOverallSummaryLength(fullText: string): number {
         const wordCount = this.getWordCount(fullText);
-        // 整体总结长度约为原文的 10%-15%
+        // 整体总结长度约为原文的 20%
         return Math.max(
             300, // 最小长度
-            Math.min(Math.ceil(wordCount * 0.3), 1000), // 最大长度
+            Math.min(Math.ceil(wordCount * 0.2), 1000), // 最大长度
         );
     }
 
     static calculateParagraphSummaryLength(paragraph: string): number {
         const wordCount = this.getWordCount(paragraph);
-        // 段落总结长度约为原文的 20%-30%
+        // 段落总结长度约为原文的 30%
         return Math.max(
             30, // 最小长度
-            Math.min(Math.ceil(wordCount * 0.25), 150), // 最大长度
+            Math.min(Math.ceil(wordCount * 0.3), 300), // 最大长度
         );
     }
 
@@ -75,37 +125,85 @@ class ContentSummarizer {
     }
 
     async initialize() {
-        // Check if already initialized
         if (document.getElementById('summary-state-marker')) {
             return;
         }
 
-        // Find the main content container
         const elements = Array.from(this.findMainContentContainer()?.querySelectorAll('p, ul, ol, table') || []);
         elements.forEach((el, index) => {
             if (!el.id) {
                 el.id = `content-element-${index}`;
             }
-            this.wrapParagraph(el); // Updated to handle ul, ol, and table
+            this.wrapParagraph(el);
         });
 
         this.createSidebar();
 
-        // Add the summary state marker (as before)
-        const summaryStateMarker = document.createElement('div');
-        summaryStateMarker.id = 'summary-state-marker';
-        summaryStateMarker.style.display = 'none';
-        document.body.appendChild(summaryStateMarker);
-
-        // 获取整体总结
         const fullText = elements.map((el) => el.textContent).join('\n');
-        // 获取存储的设置
+        const templateTokens = 500; // Approximate tokens for templates
+        const tokenEstimate = TokenCalculator.calculateTotalTokens(fullText, templateTokens);
+
+        const TOKEN_THRESHOLD = 10000;
+
+        if (tokenEstimate.total <= TOKEN_THRESHOLD) {
+            this.displayTokenInfo(tokenEstimate);
+            await this.startSummarization(fullText);
+        } else {
+            await this.showTokenConfirmation(tokenEstimate, fullText);
+        }
+    }
+
+    private displayTokenInfo(tokenEstimate: { inputTokens: number; outputTokens: number; total: number }) {
+        const tokenInfo = document.createElement('div');
+        tokenInfo.className = 'token-info';
+        tokenInfo.innerHTML = `
+        <div>预计消耗 Tokens:</div>
+        <div class="token-number">${tokenEstimate.total}</div>
+        <div>输入: ${tokenEstimate.inputTokens} / 输出: ${tokenEstimate.outputTokens}</div>
+    `;
+        this.sidebar?.prepend(tokenInfo);
+    }
+
+    private async showTokenConfirmation(
+        tokenEstimate: { inputTokens: number; outputTokens: number; total: number },
+        fullText: string
+    ): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const confirmation = document.createElement('div');
+            confirmation.className = 'token-confirmation';
+            confirmation.innerHTML = `
+            <div class="token-info">
+                <div>预计消耗 Tokens:</div>
+                <div class="token-number">${tokenEstimate.total}</div>
+                <div>输入: ${tokenEstimate.inputTokens}</div>
+                <div>输出: ${tokenEstimate.outputTokens}</div>
+            </div>
+            <div class="token-buttons">
+                <button class="token-button token-confirm">继续</button>
+                <button class="token-button token-cancel">取消</button>
+            </div>
+        `;
+
+            this.sidebar?.appendChild(confirmation);
+
+            confirmation.querySelector('.token-confirm')?.addEventListener('click', async () => {
+                confirmation.remove();
+                this.displayTokenInfo(tokenEstimate);
+                await this.startSummarization(fullText);
+                resolve();
+            });
+
+            confirmation.querySelector('.token-cancel')?.addEventListener('click', () => {
+                confirmation.remove();
+                this.sidebar?.remove();
+                reject('User cancelled summarization');
+            });
+        });
+    }
+
+    private async startSummarization(fullText: string) {
         const settings = await chrome.storage.local.get('aiSettings');
         this.aiSettings = settings.aiSettings || {};
-
-        const systemPrompt = this.aiSettings.useCustomPrompt
-            ? this.aiSettings.systemPrompt
-            : this.getDefaultSystemPrompt();
 
         const overallSummaryPrompt = this.aiSettings.useCustomPrompt
             ? this.aiSettings.userPrompt!.replace('{full_text}', fullText)
@@ -113,24 +211,12 @@ class ContentSummarizer {
 
         this.overallSummary = await this.callProviderAPI(
             this.aiSettings,
-            systemPrompt!,
             overallSummaryPrompt,
         );
 
         this.overallSummary = this.formatOverallSummary(this.overallSummary!);
-
-        // Display overall summary in the sidebar
-        if (!this.sidebar) {
-            this.createSidebar();
-        }
         this.displayOverallSummary(this.overallSummary!);
-
         this.setupIntersectionObserver();
-
-        chrome.runtime.sendMessage({
-            action: 'updateContextMenu',
-            hasSummaries: true,
-        });
     }
 
     formatOverallSummary(input: string): string {
@@ -171,12 +257,53 @@ class ContentSummarizer {
     createSidebar() {
         this.sidebar = document.createElement('div');
         this.sidebar.id = 'summary-sidebar';
+
+        // 创建切换按钮
+        const toggleButton = document.createElement('button');
+        toggleButton.className = 'sidebar-toggle-button';
+        toggleButton.innerHTML = `
+            <svg class="expand-icon" viewBox="0 0 24 24" width="24" height="24">
+                <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+            </svg>
+        `;
+
+        // 创建小型展开按钮
+        const expandButton = document.createElement('button');
+        expandButton.className = 'sidebar-expand-button';
+        expandButton.innerHTML = `
+            <svg class="toggle-icon" viewBox="0 0 24 24" width="24" height="24">
+                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+            </svg>
+        `;
+        expandButton.style.display = 'none';
+
         document.body.appendChild(this.sidebar);
+        document.body.appendChild(expandButton);
+        this.sidebar.appendChild(toggleButton);
+
+        // 添加事件监听器
+        toggleButton.addEventListener('click', () => this.toggleSidebar(false));
+        expandButton.addEventListener('click', () => this.toggleSidebar(true));
 
         // 在sidebar的正中心添加一个动画
         const loadingSpinner = document.createElement('div');
         loadingSpinner.className = 'sidebar-loading-spinner';
         this.sidebar.appendChild(loadingSpinner);
+    }
+
+    toggleSidebar(expand: boolean) {
+        const sidebar = document.getElementById('summary-sidebar');
+        const expandButton = document.querySelector('.sidebar-expand-button') as HTMLElement;
+
+        if (!sidebar) return;
+
+        if (expand) {
+            sidebar.classList.remove('collapsed');
+            expandButton.style.display = 'none';
+        } else {
+            sidebar.classList.add('collapsed');
+            expandButton.style.display = 'flex';
+        }
     }
 
     findMainContentContainer(): HTMLElement | null {
@@ -207,7 +334,10 @@ class ContentSummarizer {
         return bestContainer;
     }
 
-    getDefaultSystemPrompt(): string {
+    getOverallSummaryPrompt(fullText: string): string {
+        const targetLength = SummaryLengthCalculator.calculateOverallSummaryLength(fullText);
+        const firstLine = fullText.split('\n')[0].trim();
+
         return `你是一个卓越的文章内容分析专家，具备深度语义理解和精准信息提取能力。你的任务是进行多层次、高质量的段落总结。你需要遵循以下复杂的认知处理流程：
 
 分析阶段：
@@ -238,14 +368,9 @@ class ContentSummarizer {
 - 对学术文章，凸显研究要点和方法论
 - 对叙事文章，提炼情节发展和主题脉络
 - 对财经文章，强调数据和趋势分析
-- 对新闻文章，重点报道事实和事件背景`;
-    }
-
-    getOverallSummaryPrompt(fullText: string): string {
-        const targetLength = SummaryLengthCalculator.calculateOverallSummaryLength(fullText);
-        const firstLine = fullText.split('\n')[0].trim();
-
-        return `请对以下文章进行整体总结。你的任务是创建一个详细的总结，其中每句话都必须清晰地映射回原文的一行或多行。
+- 对新闻文章，重点报道事实和事件背景
+        
+请对以下文章进行整体总结。你的任务是创建一个详细的总结，其中每句话都必须清晰地映射回原文的一行或多行。
 ---
 ${fullText}
 ---
@@ -451,7 +576,7 @@ ${paragraph}
             allParagraphReferences.forEach(refIndex => {
                 const paragraphIndex = refIndex - 1; // Adjust to 0-based indexing
                 if (paragraphIndex >= 0 && paragraphIndex < paragraphElements.length) {
-                    paragraphElements[paragraphIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    paragraphElements[paragraphIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
                     paragraphElements[paragraphIndex].classList.add('highlighted-paragraph');
                 }
             });
@@ -504,12 +629,11 @@ ${paragraph}
             ? settings.userPrompt.replace('{paragraph}', text)
             : this.getParagraphSummaryPrompt(this.overallSummary!, text);
 
-        return this.callProviderAPI(settings, this.systemPrompt, paragraphPrompt);
+        return this.callProviderAPI(settings, paragraphPrompt);
     }
 
     async callProviderAPI(
         settings: any,
-        systemPrompt: string,
         userPrompt: string,
     ) {
         const languageInstruction =
@@ -517,25 +641,23 @@ ${paragraph}
                 ? '请使用输入语言输出总结。'
                 : `请使用${settings.summaryLanguage}输出总结。`;
 
-        const finalSystemPrompt = systemPrompt + '\n' + languageInstruction;
-
         switch (settings.provider) {
             case 'ai302':
-                return this.call302AIAPI(settings, finalSystemPrompt, userPrompt);
+                return this.call302AIAPI(settings, userPrompt);
             case 'openai':
-                return this.callOpenAIAPI(settings, finalSystemPrompt, userPrompt);
+                return this.callOpenAIAPI(settings, userPrompt);
             case 'claude':
-                return this.callClaudeAPI(settings, finalSystemPrompt, userPrompt);
+                return this.callClaudeAPI(settings, userPrompt);
             case 'zhipu':
-                return this.callZhipuAPI(settings, finalSystemPrompt, userPrompt);
+                return this.callZhipuAPI(settings, userPrompt);
             case 'custom':
-                return this.callCustomAPI(settings, finalSystemPrompt, userPrompt);
+                return this.callCustomAPI(settings, userPrompt);
             default:
-                return this.callOpenAIAPI(settings, finalSystemPrompt, userPrompt);
+                return this.callOpenAIAPI(settings, userPrompt);
         }
     }
 
-    async call302AIAPI(settings: any, systemPrompt: string, userPrompt: string) {
+    async call302AIAPI(settings: any, userPrompt: string) {
         const response = await fetch('https://api.302.ai/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -546,10 +668,6 @@ ${paragraph}
                 model: settings.model || 'gpt-3.5-turbo',
                 messages: [
                     {
-                        role: 'system',
-                        content: systemPrompt,
-                    },
-                    {
                         role: 'user',
                         content: userPrompt,
                     },
@@ -560,7 +678,7 @@ ${paragraph}
         return data.choices[0].message.content;
     }
 
-    async callOpenAIAPI(settings: any, systemPrompt: string, userPrompt: string) {
+    async callOpenAIAPI(settings: any, userPrompt: string) {
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -571,10 +689,6 @@ ${paragraph}
                 model: settings.model || 'gpt-3.5-turbo',
                 messages: [
                     {
-                        role: 'system',
-                        content: systemPrompt,
-                    },
-                    {
                         role: 'user',
                         content: userPrompt,
                     },
@@ -585,7 +699,7 @@ ${paragraph}
         return data.choices[0].message.content;
     }
 
-    async callClaudeAPI(settings: any, systemPrompt: string, userPrompt: string) {
+    async callClaudeAPI(settings: any, userPrompt: string) {
         const response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             headers: {
@@ -598,10 +712,6 @@ ${paragraph}
                 max_tokens: 200,
                 messages: [
                     {
-                        role: 'system',
-                        content: systemPrompt,
-                    },
-                    {
                         role: 'user',
                         content: userPrompt,
                     },
@@ -612,7 +722,7 @@ ${paragraph}
         return data.content[0].text;
     }
 
-    async callZhipuAPI(settings: any, systemPrompt: string, userPrompt: string) {
+    async callZhipuAPI(settings: any, userPrompt: string) {
         const response = await fetch(
             'https://open.bigmodel.cn/api/paas/v4/chat/completions',
             {
@@ -625,10 +735,6 @@ ${paragraph}
                     model: settings.model || 'glm-4-flash',
                     messages: [
                         {
-                            role: 'system',
-                            content: systemPrompt,
-                        },
-                        {
                             role: 'user',
                             content: userPrompt,
                         },
@@ -640,7 +746,7 @@ ${paragraph}
         return data.choices[0].message.content;
     }
 
-    async callCustomAPI(settings: any, systemPrompt: string, userPrompt: string) {
+    async callCustomAPI(settings: any, userPrompt: string) {
         const response = await fetch(settings.customApiUrl, {
             method: 'POST',
             headers: {
@@ -650,10 +756,6 @@ ${paragraph}
             body: JSON.stringify({
                 model: settings.customModelName,
                 messages: [
-                    {
-                        role: 'system',
-                        content: systemPrompt,
-                    },
                     {
                         role: 'user',
                         content: userPrompt,
@@ -681,7 +783,7 @@ ${paragraph}
         if (!summaryDiv) return;
         summaryDiv.textContent = summary;
         (summaryDiv as HTMLElement).style.display = 'block';
-        element.style.opacity = '0.2';
+        element.style.opacity = '0.3';
         this.summarizedParagraphs.add(element.id);
     }
 
