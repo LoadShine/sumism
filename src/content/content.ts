@@ -201,9 +201,31 @@ class ContentSummarizer {
         });
     }
 
+    private async saveOverallSummaryToCache(summary: string) {
+        const settingHashString = btoa(JSON.stringify(this.aiSettings));
+        const cacheKey = `overall_summary_${window.location.href}_${settingHashString}`;
+        await chrome.storage.local.set({ [cacheKey]: summary });
+    }
+
+    private async getOverallSummaryFromCache(): Promise<string | null> {
+        const settingHashString = btoa(JSON.stringify(this.aiSettings));
+        const cacheKey = `overall_summary_${window.location.href}_${settingHashString}`;
+        const result = await chrome.storage.local.get(cacheKey);
+        return result[cacheKey] || null;
+    }
+
     private async startSummarization(fullText: string) {
         const settings = await chrome.storage.local.get('aiSettings');
         this.aiSettings = settings.aiSettings || {};
+
+        // Try to get cached overall summary first
+        const cachedSummary = await this.getOverallSummaryFromCache();
+        if (cachedSummary) {
+            this.overallSummary = this.formatOverallSummary(cachedSummary);
+            this.displayOverallSummary(this.overallSummary);
+            this.setupIntersectionObserver();
+            return;
+        }
 
         const overallSummaryPrompt = this.aiSettings.useCustomPrompt
             ? this.aiSettings.userPrompt!.replace('{full_text}', fullText)
@@ -215,6 +237,7 @@ class ContentSummarizer {
         );
 
         this.overallSummary = this.formatOverallSummary(this.overallSummary!);
+        await this.saveOverallSummaryToCache(this.overallSummary);
         this.displayOverallSummary(this.overallSummary!);
         this.setupIntersectionObserver();
     }
@@ -391,7 +414,8 @@ ${fullText}
 请以
 "${firstLine}"
 作为第一行[P1]，并以此类推，向后依次计算行数。请仔细检查，精准对应P后面的数字与行数，不要出现数字与原文行数不匹配的情况。
-你的首要任务是保证总结的准确性和与原文的精确对应。`;
+你的首要任务是保证总结的准确性和与原文的精确对应。
+请使用中文输出。`;
     }
 
     getParagraphSummaryPrompt(
@@ -412,19 +436,88 @@ ${paragraph}
 2. 总结长度控制在${targetLength}字以内
 3. 避免与整体总结重复
 4. 突出该段落独特的信息价值
-5. 确保总结与上下文逻辑连贯`;
+5. 确保总结与上下文逻辑连贯
+6. 请使用中文输出。`;
     }
 
     wrapParagraph(element: Element) {
         const wrapper = document.createElement('div');
-        wrapper.className = 'paragraph-wrapper'; // Keep the same class name for consistency
+        wrapper.className = 'paragraph-wrapper';
         element.parentNode?.insertBefore(wrapper, element);
         wrapper.appendChild(element);
 
+        const summaryContainer = document.createElement('div');
+        summaryContainer.className = 'summary-container';
+
         const summaryDiv = document.createElement('div');
         summaryDiv.className = 'summary-content';
+        summaryDiv.setAttribute('contenteditable', 'false');
         summaryDiv.style.display = 'none';
-        wrapper.insertBefore(summaryDiv, element);
+
+        const editControls = document.createElement('div');
+        editControls.className = 'edit-controls';
+        editControls.style.display = 'none';
+
+        const saveButton = document.createElement('button');
+        saveButton.className = 'save-button';
+        saveButton.innerHTML = `
+        <svg viewBox="0 0 24 24" width="16" height="16">
+            <path fill="currentColor" d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/>
+        </svg>
+        <span>Save</span>
+    `;
+
+        const cancelButton = document.createElement('button');
+        cancelButton.className = 'cancel-button';
+        cancelButton.innerHTML = `
+        <svg viewBox="0 0 24 24" width="16" height="16">
+            <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+        </svg>
+        <span>Cancel</span>
+    `;
+
+        editControls.appendChild(saveButton);
+        editControls.appendChild(cancelButton);
+
+        summaryContainer.appendChild(summaryDiv);
+        summaryContainer.appendChild(editControls);
+        wrapper.insertBefore(summaryContainer, element);
+
+        let originalContent = '';
+
+        // Double click to edit
+        summaryDiv.addEventListener('dblclick', () => {
+            originalContent = summaryDiv.textContent || '';
+            summaryDiv.setAttribute('contenteditable', 'true');
+            summaryDiv.focus();
+            editControls.style.display = 'flex';
+            editControls.classList.add('visible');
+            summaryDiv.classList.add('editing');
+        });
+
+        // Save button click handler
+        saveButton.addEventListener('click', async () => {
+            const newContent = summaryDiv.textContent || '';
+            summaryDiv.setAttribute('contenteditable', 'false');
+            editControls.style.display = 'none';
+            editControls.classList.remove('visible');
+            summaryDiv.classList.remove('editing');
+
+            // Save to cache
+            await this.saveToCache(
+                btoa(JSON.stringify(this.aiSettings)) + '_' + element.id,
+                newContent
+            );
+        });
+
+        // Cancel button click handler
+        cancelButton.addEventListener('click', () => {
+            summaryDiv.textContent = originalContent;
+            summaryDiv.setAttribute('contenteditable', 'false');
+            editControls.style.display = 'none';
+            editControls.classList.remove('visible');
+            summaryDiv.classList.remove('editing');
+        });
     }
 
     setupIntersectionObserver() {

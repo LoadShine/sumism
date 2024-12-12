@@ -1,38 +1,12 @@
-.loading-spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top: 2px solid #2196F3;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    backdrop-filter: blur(5px);
-}
-
-@keyframes spin {
-    0% {
-        transform: rotate(0deg);
-    }
-    100% {
-        transform: rotate(360deg);
-    }
-}
-
-@keyframes float {
-    0% {
-        transform: translate(-50%, -50%) translateY(0px);
-    }
-    50% {
-        transform: translate(-50%, -50%) translateY(-10px);
-    }
-    100% {
-        transform: translate(-50%, -50%) translateY(0px);
-    }
+.summary-container {
+    position: relative;
+    margin: 8px 0;
 }
 
 .summary-content {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
     position: relative;
-    background: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.8);
     color: #1a1a1a;
     line-height: 1.6;
     font-weight: 400;
@@ -41,20 +15,89 @@
     border-radius: 12px;
     backdrop-filter: blur(10px);
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-    transition: all 0.3s ease;
-    margin: 8px 0;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    margin: 0;
+    border: 2px solid transparent;
 }
 
-.summary-content::after {
-    content: '';
+.summary-content:hover {
+    background: rgba(255, 255, 255, 0.9);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
+}
+
+.summary-content.editing {
+    background: rgba(255, 255, 255, 0.95);
+    border: 2px solid #2196F3;
+    box-shadow: 0 8px 16px rgba(33, 150, 243, 0.1);
+}
+
+.edit-controls {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 40%;
-    background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.8));
-    border-radius: 0 0 12px 12px;
-    pointer-events: none;
+    right: 8px;
+    bottom: -36px;
+    display: flex;
+    gap: 8px;
+    z-index: 1000;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.edit-controls.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.save-button,
+.cancel-button {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(8px);
+}
+
+.save-button {
+    background: rgba(33, 150, 243, 0.9);
+    color: white;
+}
+
+.save-button:hover {
+    background: rgba(33, 150, 243, 1);
+    transform: translateY(-1px);
+}
+
+.cancel-button {
+    background: rgba(255, 255, 255, 0.9);
+    color: #666;
+}
+
+.cancel-button:hover {
+    background: rgba(255, 255, 255, 1);
+    color: #333;
+    transform: translateY(-1px);
+}
+
+.loading-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(33, 150, 243, 0.1);
+    border-top: 2px solid #2196F3;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 .sidebar-loading-spinner {
@@ -69,6 +112,18 @@
     left: 50%;
     transform: translate(-50%, -50%);
     backdrop-filter: blur(5px);
+}
+
+@keyframes float {
+    0% {
+        transform: translate(-50%, -50%) translateY(0px);
+    }
+    50% {
+        transform: translate(-50%, -50%) translateY(-10px);
+    }
+    100% {
+        transform: translate(-50%, -50%) translateY(0px);
+    }
 }
 
 #summary-sidebar {
